@@ -10,7 +10,7 @@ from rmscene import read_tree, read_blocks, write_blocks, simple_text_document
 from .exporters.svg import tree_to_svg
 from .exporters.pdf import svg_to_pdf
 from .exporters.markdown import print_text
-
+from .exporters.inmkl import tree_to_xml
 import logging
 
 
@@ -139,6 +139,9 @@ def convert_rm(filename: Path, to, fout):
             tree_to_svg(tree, buf)
             buf.seek(0)
             svg_to_pdf(buf, fout)
+        elif to == "inkml":
+            tree = read_tree(f)
+            tree_to_xml(tree, fout)
         else:
             raise click.UsageError("Unknown format %s" % to)
 
