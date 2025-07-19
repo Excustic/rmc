@@ -1,42 +1,47 @@
 __author__ = "Michael Kushnir"
+__version__ = "1.0"
+
 
 from rmscene.scene_items import PenColor
-from rmscene.scene_items import Pen as PenEnum
 """
 Convert .rm SceneTree to InkML-supported XML file.
 """
 import logging
-import typing as tp
 from pathlib import Path
-import string
-from rmscene import SceneTree, read_tree, CrdtId
+from rmscene import SceneTree
+from .svg import build_anchor_pos, get_anchor, get_bounding_box, LINE_HEIGHTS
 from rmscene import scene_items as si
 from rmscene.text import TextDocument
 from typing import List, Tuple
 from .writing_tools import Pen, RM_PALETTE
 
-# Initialize module logger
-_logger = logging.getLogger(__name__)
+# ----CONSTANTS----
 
-SCREEN_WIDTH = 32767
-SCREEN_HEIGHT = 32767
 A4_HEIGHT_MM = 297
 A4_WIDTH_MM = 210
 ASPECT_RATIO = A4_WIDTH_MM / A4_HEIGHT_MM
-# Explicit padding to avoid top-left collisions (e.g. page title)
-X_PAD = 200
-Y_PAD = 200
+X_PAD = 0
+Y_PAD = 600 # OneNote pages have titles at the top, padding is used to avoid overlap.
 WIDTH_CONV_CONSTANT = 10
 HEIGHT_CONV_CONSTANT = 10
 PRESSURE_CONV_CONSTANT = 128
-X_OFFSET = 148
-Y_OFFSET = 512
+XML_HEADER = ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+              "<inkml:ink xmlns:emma=\"http://www.w3.org/2003/04/emma\" "
+                 "xmlns:msink=\"http://schemas.microsoft.com/ink/2010/main\""
+                 " xmlns:inkml=\"http://www.w3.org/2003/InkML\">\n")
+
+# ----GLOBAL VARIABLES----
+
 min_x = min_y = max_x = max_y = 0
+trace_id = 1
+_logger = logging.getLogger(__name__) # Initialize module logger
+
+
+# ----FUNCTIONS-----
 
 def scale(x: float, y: float) -> Tuple[int, int]:
     global min_x, max_x, min_y, max_y
 
-    # 1. Calculate original ranges
     x_range = max_x - min_x
     y_range = max_y - min_y
 
@@ -45,72 +50,53 @@ def scale(x: float, y: float) -> Tuple[int, int]:
     if y_range == 0:
         y_range = 1
 
-    # 2. Apply A4 aspect correction
-    raw_ratio = x_range / y_range
-    if raw_ratio > ASPECT_RATIO:
-        # Wider → extend Y range
-        target_y_range = x_range / ASPECT_RATIO
-        y_center = (min_y + max_y) / 2
-        min_y = y_center - target_y_range / 2
-        max_y = y_center + target_y_range / 2
-        y_range = target_y_range
-    else:
-        # Taller → extend X range
-        target_x_range = y_range * ASPECT_RATIO
-        x_center = (min_x + max_x) / 2
-        min_x = x_center - target_x_range / 2
-        max_x = x_center + target_x_range / 2
-        x_range = target_x_range
-
-    # 3. Compute drawable screen area after padding
-    draw_width = SCREEN_WIDTH - 2 * X_PAD
-    draw_height = SCREEN_HEIGHT - 2 * Y_PAD
-
-    # 4. Normalize and scale
+    # Normalize to (0, 1)
     x_norm = (x - min_x) / x_range
     y_norm = (y - min_y) / y_range
 
-    new_x = int(x_norm * draw_width + X_PAD)
-    new_y = int(y_norm * draw_height + Y_PAD)
-
-    # 5. Clamp to ensure no overflow
-    new_x = max(X_PAD, min(SCREEN_WIDTH - X_PAD, new_x))
-    new_y = max(Y_PAD, min(SCREEN_HEIGHT - Y_PAD, new_y))
+    # Scale uniformly and add padding
+    new_x = int(x_norm * x_range * WIDTH_CONV_CONSTANT + X_PAD)
+    new_y = int(y_norm * y_range * HEIGHT_CONV_CONSTANT + Y_PAD)
 
     return new_x, new_y
 
-XML_HEADER = ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-              "<inkml:ink xmlns:emma=\"http://www.w3.org/2003/04/emma\" "
-                 "xmlns:msink=\"http://schemas.microsoft.com/ink/2010/main\""
-                 " xmlns:inkml=\"http://www.w3.org/2003/InkML\">\n")
-
-def rm_to_inkml(rm_path: tp.Union[str, Path], inkml_path: tp.Union[str, Path]):
-    _logger.info("Converting %s to %s", rm_path, inkml_path)
-    with open(rm_path, "rb") as infile, open(inkml_path, "wt", encoding='utf-8') as outfile:
-        tree = read_tree(infile)
-        tree_to_xml(tree, outfile)
-    _logger.info("Conversion complete.")
-
 
 def tree_to_xml(tree: SceneTree, output):
+    """
+    Traverses through a SceneTree and dumps all the data to the XML file, retaining accurate ink data.
+    :param tree:  The SceneTree that is extracted from the .rm file.
+    :param output: IO stream of the output XML file.
+    """
     _logger.debug("Exporting %d items to InkML", len(list(tree.walk())))
-    # XML header and root
+    # ----XML header and root----
     output.write(XML_HEADER)
-    # Add pen configurations to file header
-    configure_ink(tree, output)
-    # Trace group - all ink data is placed here
+    configure_ink(tree, output) # Add pen configurations to file header
+    # ---XML ink data---
     global min_x, max_x, min_y, max_y
-    min_x, max_x, min_y, max_y = get_bounding_box(tree)
+    anchor_pos = build_anchor_pos(tree.root_text)
+    min_x, max_x, min_y, max_y = get_bounding_box(tree.root, anchor_pos)
     output.write("  <inkml:traceGroup>\n")
-    trace_id = 1
-    for item in tree.walk():
-        if isinstance(item, si.Line):
-            draw_stroke(item, output, trace_id)
-            trace_id += 1
+    draw_tree(tree.root, output, anchor_pos)
     output.write("  </inkml:traceGroup>\n")
-    print("minimas: ", min_x, min_y, "maximas:", max_x, max_y)
-    output.write("</inkml:ink>\n")
+    global trace_id
     _logger.debug("Finished InkML export: %d traces", trace_id-1)
+    output.write("</inkml:ink>\n")
+
+
+def draw_tree(item: si.Group, output, anchor_pos, move_pos = (0,0)):
+    for child_id in item.children:
+        child = item.children[child_id]
+        _logger.debug("Group child: %s %s", child_id, type(child))
+        if isinstance(child, si.Group):
+            # A group (Pen Type) has anchor coordinates to which the contained strokes' point coordinates are relative
+            move_x, move_y = move_pos
+            x, y = get_anchor(child, anchor_pos)
+            draw_tree(child, output, anchor_pos,(x + move_x, y + move_y))
+        if isinstance(child, si.Line):
+            global trace_id
+            draw_stroke(child, output, trace_id, move_pos)
+            trace_id += 1
+
 
 def configure_ink(tree: SceneTree, output):
     """
@@ -151,9 +137,11 @@ def configure_ink(tree: SceneTree, output):
     </inkml:brush>""")
     output.write("\n  </inkml:definitions>\n")
 
+
 def generate_id_from_pen(pen: Pen):
     return (f"name_{pen.name}_cap_{pen.stroke_linecap}_op_{pen.stroke_opacity}_w_"
             f"{pen.stroke_width}_clr_{pen.stroke_color}")
+
 
 def fetch_used_inks(tree: SceneTree) -> List[Pen]:
     pens = []
@@ -169,7 +157,8 @@ def fetch_used_inks(tree: SceneTree) -> List[Pen]:
                 pens.append(pen)
     return pens
 
-def draw_stroke(item: si.Line, output, trace_id: int) -> None:
+
+def draw_stroke(item: si.Line, output, trace_id: int, move_pos: Tuple[int, int] = (0,0)) -> None:
     if _logger.root.level == logging.DEBUG:
         _logger.debug("Drawing stroke %d from node %s with %d points", trace_id, item.node_id, len(item.points))
     tid = str(trace_id)
@@ -184,10 +173,9 @@ def draw_stroke(item: si.Line, output, trace_id: int) -> None:
             min_y = pt.y
         elif pt.y > max_y:
             max_y = pt.y
-        scaled_x, scaled_y = scale(pt.x, pt.y)
+        move_x, move_y = move_pos
+        scaled_x, scaled_y = scale(pt.x + move_x, pt.y + move_y)
         scaled_pressure = int(pt.pressure * PRESSURE_CONV_CONSTANT)
-        if scaled_x >= SCREEN_WIDTH or scaled_y >= SCREEN_HEIGHT or scaled_pressure >= SCREEN_HEIGHT or (scaled_x * scaled_y * scaled_pressure < 0):
-            print("AAAH AAH", scaled_x, scaled_y, scaled_pressure)
         coord.append(f"{scaled_x} {scaled_y} {scaled_pressure}")
     coord_str = ",".join(coord)
     # TODO - temporary fix until rmscene supports highlighter/shader colors
@@ -200,41 +188,30 @@ def draw_stroke(item: si.Line, output, trace_id: int) -> None:
     )
 
 
-def draw_text(item: si.Text, output) -> None:
-    _logger.debug("Drawing text from node %s", item.node_id)
-    doc = TextDocument.from_scene_item(item)
-    # Render text runs as annotations or ignore for InkML
-    pass
-
-def get_bounding_box(tree: SceneTree,
-                     default: tp.Tuple[int, int, int, int] = (0,0,0,0)) \
-        -> tp.Tuple[int, int, int, int]:
-    """
-    Get the bounding box of the given item.
-    The minimum size is the default size of the screen.
-
-    :return: x_min, x_max, y_min, y_max: the bounding box in screen units (need to be scalded using xx and yy functions)
-    """
-    x_min, x_max, y_min, y_max = default
-
-    for item in tree.walk():
-        if isinstance(item, si.Line):
-            x_min = min([x_min] + [p.x for p in item.points])
-            x_max = max([x_max] + [p.x for p in item.points])
-            y_min = min([y_min] + [p.y for p in item.points])
-            y_max = max([y_max] + [p.y for p in item.points])
-
-    return x_min, x_max, y_min, y_max
-
-def get_anchor(item: si.Group, anchor_pos):
-    anchor_x = 0.0
-    anchor_y = 0.0
-    if item.anchor_id is not None:
-        assert item.anchor_origin_x is not None
-        anchor_x = item.anchor_origin_x.value
-        if item.anchor_id.value in anchor_pos:
-            anchor_y = anchor_pos[item.anchor_id.value]
-        else:
-            _logger.warning("Group anchor: %s is unknown!", item.anchor_id.value)
-
-    return anchor_x, anchor_y
+def tree_to_html(tree: SceneTree, output):
+    text = tree.root_text
+    doc = TextDocument.from_scene_item(text)
+    x_offset = 600
+    y_offset = Y_PAD
+    page_title = Path(output.name).stem
+    output.write(f"""<html>
+    <head>
+        <title>{page_title}</title>
+    </head>
+    <body data-absolute-enabled="true" style="font-family:Calibri;font-size:11pt">""")
+    for p in doc.contents:
+        y_offset += 20
+        xpos = int(text.pos_x)
+        ypos = int(text.pos_y / 2)
+        print(ypos)
+        if str(p):
+            style_props = [f'{prop}: {val}' for prop,val in p.contents[0].properties.items()]
+            output.write(
+            f"""   
+        <div id="{p.start_id}" style="position: absolute; left: {xpos + x_offset}px; top: {ypos + y_offset}px; width: {int(text.width)}px">
+            <p style="{';'.join(style_props)}">{str(p).strip()}</p>
+        </div>""")
+            y_offset += LINE_HEIGHTS.get(p.style.value) - 20
+    output.write("""
+    </body>
+</html>""")
