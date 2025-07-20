@@ -42,7 +42,13 @@ Right now the converter works well while there are no text boxes. If you add tex
 This fork introduces the possibility of converting `.rm` files to OneNote compatible files.
 To use this functionality insert the following command in your editor's configuration:
 * module: `rmc.cli`
-* Script parameters: `-t inkml ./tests/rm/<YOUR_FILE>.rm -o ./tests/out/<GENERATED_FILES_NAME>`
+* Script parameters: `-t inkml ./tests/rm/<INPUT_FILE>.rm -o ./tests/out/<GENERATED_FILES_NAME>`
+
+Alternatively, here's an example using a terminal (assuming it is opened from the project's root dir):
+```
+cd src/rmc/
+python -m rmc.cli -t inkml <FULL_PATH_TO_PROJECT>\tests\rm\<INPUT_FILE>.rm -o <FULL_PATH_TO_PROJECT>\tests\rm\test_rmpp
+```
 
 Note that the output name should be without extensions as the converter outputs two different files:
 * XML - Contains all the ink data extracted from the `.rm` file, retaining full quality.
