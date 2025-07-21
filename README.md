@@ -38,6 +38,25 @@ Right now the converter works well while there are no text boxes. If you add tex
 1. if the text box contains multiple lines, the lines are actually printed in the same line, and
 2. the position of the strokes gets corrupted.
 
+## Setting Up Development Environment - Quickstart
+To enable debugging and code execution in your cloned repository, you can set up manually your environment following these steps:
+
+1. Install scoop command line interface, [refer to the Quickstart section](https://scoop.sh/).
+2. Install pipx using scoop:
+   ```
+   scoop install pipx
+   ```
+3. Install poetry for create your python virtual environment:
+   ```
+   pipx install poetry
+   ```
+4. Add poetry to your PATH environment variable.
+5. Install dependencies for your poetry environment
+   ```
+   poetry install
+   ```
+
+It is also suggested to check if your IDE has an easier way of setting up a poetry environment with a few clicks - avoid user errors.
 ## _InkML Addition - Excustic_
 This fork introduces the possibility of converting `.rm` files to OneNote compatible files.
 To use this functionality insert the following command in your editor's configuration:
