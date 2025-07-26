@@ -1,5 +1,5 @@
 __author__ = "Michael Kushnir"
-__version__ = "1.0"
+__version__ = "1.1"
 
 
 from rmscene.scene_items import PenColor
@@ -190,7 +190,6 @@ def draw_stroke(item: si.Line, output, trace_id: int, move_pos: Tuple[int, int] 
 
 def tree_to_html(tree: SceneTree, output):
     text = tree.root_text
-    doc = TextDocument.from_scene_item(text)
     x_offset = 600
     y_offset = Y_PAD
     page_title = Path(output.name).stem
@@ -199,19 +198,25 @@ def tree_to_html(tree: SceneTree, output):
         <title>{page_title}</title>
     </head>
     <body data-absolute-enabled="true" style="font-family:Calibri;font-size:11pt">""")
-    for p in doc.contents:
-        y_offset += 20
-        xpos = int(text.pos_x)
-        ypos = int(text.pos_y / 2)
-        print(ypos)
-        if str(p):
-            style_props = [f'{prop}: {val}' for prop,val in p.contents[0].properties.items()]
-            output.write(
-            f"""   
-        <div id="{p.start_id}" style="position: absolute; left: {xpos + x_offset}px; top: {ypos + y_offset}px; width: {int(text.width)}px">
-            <p style="{';'.join(style_props)}">{str(p).strip()}</p>
-        </div>""")
-            y_offset += LINE_HEIGHTS.get(p.style.value) - 20
+    if text is not None:
+        doc = TextDocument.from_scene_item(text)
+        for p in doc.contents:
+            y_offset += 20
+            xpos = int(text.pos_x)
+            ypos = int(text.pos_y / 2)
+            if str(p):
+                style_props = [f'{prop}: {val}' for prop,val in p.contents[0].properties.items()]
+                try:
+                    # Translate unsupported unicode chars
+                    content = str(p).strip().replace('\u2028', '<br>').replace('\u2029', '<br>')
+                    output.write(
+                    f"""   
+                <div id="{p.start_id}" style="position: absolute; left: {xpos + x_offset}px; top: {ypos + y_offset}px; width: {int(text.width)}px">
+                    <p style="{';'.join(style_props)}">{content}</p>
+                </div>""")
+                    y_offset += LINE_HEIGHTS.get(p.style.value) - 20
+                except Exception as e:
+                    print(e)
     output.write("""
     </body>
 </html>""")
